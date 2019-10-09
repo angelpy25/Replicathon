@@ -19,6 +19,7 @@ For each answer, include text by simply typing below the question. Include code 
 
 ```{r}
 #Your code goes here
+library(tidyverse)
 ```
 
 You may find it helpful to use the version control and code sharing system called GitHub to work together with your team so that all of you can edit the same document and keep track of its changes. Here is a [setup guide](https://github.com/datasciencelabs/2016/blob/master/lectures/git-and-github/setting-up-git.Rmd) and [brief introduction to Git and GitHub](https://github.com/datasciencelabs/2016/blob/master/lectures/git-and-github/version-control.Rmd) from another course. The mentors will be able to help if you run into problems. 
@@ -26,10 +27,37 @@ You may find it helpful to use the version control and code sharing system calle
 ## Questions:
 
 ### Exploratory analysis of pharmacogenomic data
+```{r}
+head(pharmacoData )
+str(pharmacoData )
+summary(pharmacoData)
+```
 
 1. How many cell-lines are contained in the data?
+```{r}
+cellLines <- unique(pharmacoData$cellLine) 
+length(cellLines)
+```
 
 2. What drug concentrations were used in each study?
+```{r}
+drugConcPerStudy <- select(pharmacoData, study, concentration, drug)
+drugConcPerStudy
+
+drugConcPerStudy %>%
+    group_by(study, concentration, drug) %>%
+    summarize(n())
+
+allDrugConcPerStudy <- drugConcPerStudy %>%
+    group_by(study, drug) %>%
+    summarize(meanDrugConc=mean(concentration), maxDrugConc=max(concentration), minDrugConc=min(concentration), n())
+allDrugConcPerStudy
+
+summDrugConcPerStudy <- drugConcPerStudy %>%
+    group_by(study) %>%
+    summarize(meanDrugConc=mean(concentration), maxDrugConc=max(concentration), minDrugConc=min(concentration), concentration= n_distinct(concentration), drugTypes=n_distinct(drug), n())
+summDrugConcPerStudy
+```
 
 3. Histograms, appart from telling how is the data
 distributed, can also make evident potential
@@ -37,25 +65,107 @@ problems with the data. Plot a histogram
 of drug viabilities. Does it look as one would
 expect from the description of the data?
 
+```{r}
+pharmacoData %>%
+    ggplot(aes(x = log2(viability))) +
+    geom_histogram(fill = "gray", color = "black") +
+    facet_wrap(~ drug) +
+    ggtitle("Distributions of viability by drug")
+
+pharmacoData %>%
+    ggplot(aes(x = viability)) +
+    geom_histogram(aes( color = study, binwidth = 0.1)) +
+    facet_wrap(~ drug) +
+    ggtitle("Distributions of viability by drug")
+```
+
+
 4. How many viability data points are within the
 expected range according to the definition of viability (e.g. above 0 
 and below 100)? Try to come up with explanations about
 the values that are out of range. Are these due to technical
 issues? Biology?
+```{r}
+rawPharmacoData %>%
+    group_by(study)%>%
+    summarize(min_viability = min(viability),
+              max_viability = max(viability),
+              n_too_small   = sum(viability < 0),
+              n_too_big     = sum(viability > 100),
+              n_middle      = sum(viability >0 & viability < 100))
+```
+
 
 5. Read the csv file containing the summarized data files. What kind
 of variables are in the data? What does each column represents?
+```{r}
+summarizedPharmacoData <-read.csv("summarizedPharmacoData.csv")
+str(summarizedPharmacoData)
+```
+
 
 6. Plot a histogram of the viability scores as a function of the drug
 doses. Are stronger drug concentrations consistent with lower viability scores?
 
+```{r}
+ggplot(rawPharmacoData, aes(x = viability)) +
+    geom_histogram(aes(color = drug, binwidth = 0.1)) +
+    facet_wrap(~ concentration) +
+    ggtitle("Viability Scores vs Drug Doses")
+```
+
+
 ### Using Correlation Measures to Assess Replicability of Drug Response Studies
 
 1. Create a scatterplot for each drug comparing the AUC in GDSC and CCLE for all cell lines (hint: code from Tutorial 2 may help).
+```{r}
+ggplot(summarizedPharmacoData, aes(x = auc_GDSC, y = auc_CCLE, col = drug)) +
+    geom_jitter(alpha = 1/2) +
+    xlab("GDSC AUC") +
+    ylab("CCLE AUC") +
+    ggtitle("Comparing AUC in GDSC and CCLE for all cell lines")
+```
 
 2. Calculate correlation coefficients of the AUC in GDSC and CCLE for each drug (hint: code from Tutorial 2 may help). 
+```{r}
+ggplot(summarizedPharmacoData, aes(x = auc_GDSC, y = auc_CCLE, col = drug)) +
+    geom_jitter(alpha = 1/2) +
+    xlab("GDSC AUC") +
+    ylab("CCLE AUC") +
+    facet_wrap(~ drug) +
+    geom_smooth(method = "lm", col = "black") +
+    ggtitle("Comparing AUC in GDSC and CCLE for all drugs")
+```
 
 3. Based on the scatterplot and correlation values, would you say that they tend to agree? Why or why not?
+```{r}
+drugCorrs <- summarizedPharmacoData %>% 
+    group_by(drug) %>%
+    summarize(Pearson_ic50  = cor(-log10(ic50_GDSC / 10^6), -log10(ic50_CCLE / 10^6), method = "pearson"), Spearman_ic50 = cor(-log10(ic50_GDSC / 10^6), -log10(ic50_CCLE / 10^6), method = "spearman"))
+
+drugCorrs
+
+drugCorrs %>%
+  tidyr::spread(measure, correlation) %>%
+  ggplot(aes(x = Pearson_ic50, y = Spearman_ic50, label = drug)) +
+    geom_point(alpha = 1/2) +
+    geom_text() +
+    ggtitle("Correlation of cell line IC50 summaries between studies for each drug")
+
+drugCorrs <- gather(drugCorrs, measure, correlation, -drug)
+
+drugCorrs
+
+drugCorrs %>%
+    ggplot(aes(x = drug, y = correlation, fill = measure, group = measure)) +
+    geom_bar(stat = "identity", position = position_dodge(), colour = "black") + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_grey() +
+    ylim(0, 1) + 
+    ggtitle("Correlation of cell line IC50 summaries between studies for each drug")
+
+
+```
 
 4. Does the AUC or IC50 suggest more agreement between the studies? 
 
